@@ -1,0 +1,713 @@
+/***
+ * Clash Verge Rev 全局扩展脚本（懒人配置）
+ * 这个全局脚本没在代理合集中测试过，按道理应该是用不了的
+ * 既然用懒人配置了，那请好好偷懒，别问太多为什么
+ * 这个配置主要实现的功能是按地区分策略组组，并且在组内排除高倍率节点
+ * 已经在高达不超过10个机场测试过了（没钱买更多的），兼容性很好（自我感觉），都能实现预期的功能
+ * 有些自己踩过坑的地方都已经注释了，希望我的理解没错
+ * 部分代码编写非常拙劣，sorr9ry lo～
+ */
+
+/**
+ * 地区配置，通过regex匹配代理节点名称
+ * regex会有一定概率误判，自己调整一下吧
+ * excludeHighPercentage是排除高倍率节点的开关，只对地区分组有效
+ * 倍率大于regions里的ratioLimit值的代理节点会被排除
+ */
+const options = {
+    excludeHighPercentage: true,
+    regions: [{
+            name: "HK香港",
+            regex: /港|🇭🇰|hk|hongkong|hong kong/i,
+            ratioLimit: 2,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/flags/hk.svg",
+        },
+        {
+            name: "US美国",
+            regex: /美|🇺🇸|us|united state|america/i,
+            ratioLimit: 2,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/flags/us.svg",
+        },
+        {
+            name: "JP日本",
+            regex: /日本|🇯🇵|jp|japan/i,
+            ratioLimit: 2,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/flags/jp.svg",
+        },
+        {
+            name: "KR韩国",
+            regex: /韩|🇰🇷|kr|korea/i,
+            ratioLimit: 2,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/flags/kr.svg",
+        },
+        {
+            name: "SG新加坡",
+            regex: /新加坡|🇸🇬|sg|singapore/i,
+            ratioLimit: 2,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/flags/sg.svg",
+        },
+        {
+            name: "CN中国大陆",
+            regex: /中国|🇨🇳|cn|china/i,
+            ratioLimit: 2,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/flags/cn.svg",
+        },
+        {
+            name: "TW台湾省",
+            regex: /台湾|🇨🇳|tw|taiwan|tai wan/i,
+            ratioLimit: 2,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/flags/cn.svg",
+        },
+        {
+            name: "GB英国",
+            regex: /英|🇬🇧|uk|united kingdom|great britain/i,
+            ratioLimit: 2,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/flags/gb.svg",
+        },
+    ],
+};
+
+/**
+ * 其实两组DNS就够了，一组国内，一组国外
+ * defaultDNS是用来解析DNS的，必须为IP
+ * DNS最好不要超过两个，从业界某知名APP的文档里学的
+ */
+const defaultDNS = ["tls://1.12.12.12", "tls://223.5.5.5"];
+
+const chinaDNS = ["119.29.29.29", "180.184.1.1"];
+
+const foreignDNS = [
+    "tls://dns.google",
+    "tls://one.one.one.one",
+    "tls://dns.quad9.net",
+];
+
+/**
+ * use-hosts在这个脚本里并不是必须的，因为我并没有进行相关的配置
+ * use-system-hosts主要是方便我自己的，因为我电脑里有自己的hosts
+ */
+const dnsConfig = {
+    enable: true,
+    listen: ":53",
+    ipv6: true,
+    "prefer-h3": true,
+    "use-hosts": true,
+    "use-system-hosts": true,
+    "respect-rules": true,
+    "enhanced-mode": "fake-ip",
+    "fake-ip-range": "198.18.0.1/16",
+    "fake-ip-filter": [
+        // LAN
+        "*.lan",
+        "*.localdomain",
+        "*.example",
+        "*.invalid",
+        "*.localhost",
+        "*.test",
+        "*.local",
+        "*.home.arpa",
+        /**
+         * 以下规则来自ClashForAndroid项目源代码
+         */
+        // Stun Services
+        "+.stun.*.*",
+        "+.stun.*.*.*",
+        "+.stun.*.*.*.*",
+        "+.stun.*.*.*.*.*",
+        // Google Voices
+        "lens.l.google.com",
+        // Nintendo Switch
+        "*.n.n.srv.nintendo.net",
+        // PlayStation
+        "+.stun.playstation.net",
+        // XBox
+        "xbox.*.*.microsoft.com",
+        "*.*.xboxlive.com",
+        // Microsoft
+        "*.msftncsi.com",
+        "*.msftconnecttest.com",
+        // Bilibili CDN
+        "*.mcdn.bilivideo.cn",
+    ],
+    "default-nameserver": [...defaultDNS],
+    nameserver: [...foreignDNS],
+    "proxy-server-nameserver": [...foreignDNS],
+    /**
+     * 这里对域名解析进行分流
+     * 由于默认dns是国外的了，只需要把国内ip和域名分流到国内dns
+     */
+    "nameserver-policy": {
+        "geoip:private": "system",
+        "geoip:cn": chinaDNS,
+        "geosite:private": "system",
+        "geosite:cn,steam@cn,category-games@cn": chinaDNS,
+    },
+};
+
+// 规则集通用配置
+const ruleProviderCommon = {
+    type: "http",
+    format: "yaml",
+    interval: 86400,
+};
+
+// 规则集配置
+/**
+ * 常用的规则集就是loyalsoldier和blackmatrix7
+ * 这些规则集能极大的方便我们做分流
+ * 但是这些规则集有很多是相互之间有重叠的，使用前最好仔细看看里面到底有什么规则
+ * 规则多了运行的时候内存占用会明显增加
+ */
+const ruleProviders = {
+    gfw: {
+        ...ruleProviderCommon,
+        behavior: "domain",
+        url: "https://fastly.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/gfw.txt",
+        path: "./ruleset/loyalsoldier/gfw.yaml",
+    },
+    reject: {
+        ...ruleProviderCommon,
+        behavior: "domain",
+        url: "https://fastly.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt",
+        path: "./ruleset/loyalsoldier/reject.yaml",
+    },
+    download: {
+        ...ruleProviderCommon,
+        behavior: "classical",
+        url: "https://fastly.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Download/Download.yaml",
+        path: "./ruleset/blackmatrix7/download.yaml",
+    },
+    gamedownload_cn: {
+        ...ruleProviderCommon,
+        behavior: "classical",
+        url: "https://fastly.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Game/GameDownloadCN/GameDownloadCN.yaml",
+        path: "./ruleset/blackmatrix7/gamedownload_cn.yaml",
+    },
+    gemini: {
+        ...ruleProviderCommon,
+        behavior: "classical",
+        url: "https://fastly.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Gemini/Gemini.yaml",
+        path: "./ruleset/blackmatrix7/gemini.yaml",
+    },
+    claude: {
+        ...ruleProviderCommon,
+        behavior: "classical",
+        url: "https://fastly.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Claude/Claude.yaml",
+        path: "./ruleset/blackmatrix7/claude.yaml",
+    },
+};
+
+/**
+ * 前面说了规则集会明显增加内存占用所以个人更喜欢用GEO文件内的规则
+ * 网上的规则集选几个自己需要的作为补充
+ * MetaCubeX的GEOSITE其实已经覆盖了loyalsoldier和blackmatrix7里面比较常用的规则
+ * 规则的排序直接影响分流的结果
+ * github规则集其实包含在microsoft内，删掉也可以
+ * 当然，你也可以用逻辑运算符做更精细的规则
+ * 分流规则主要有两种方向，即黑名单模式和白名单模式
+ * 这里的例子属于灰名单模式
+ */
+const rules = [
+    "RULE-SET,gamedownload_cn,全局直连",
+    "GEOSITE,private,全局直连",
+    "GEOSITE,openai,OpenAI",
+    "RULE-SET,gemini,OpenAI",
+    "RULE-SET,claude,OpenAI",
+    "GEOIP,telegram,电报消息",
+    "GEOIP,cloudflare,节点选择",
+    "GEOIP,cloudfront,节点选择",
+    "GEOSITE,apple,苹果服务",
+    "GEOSITE,github,节点选择",
+    "GEOSITE,microsoft,微软服务",
+    "GEOSITE,youtube,国外媒体",
+    "GEOSITE,google,谷歌服务",
+    "GEOSITE,twitter,节点选择",
+    "GEOSITE,facebook,节点选择",
+    "GEOSITE,pixiv,节点选择",
+    "GEOSITE,category-scholar-!cn,节点选择",
+    "GEOSITE,biliintl,国外媒体",
+    "GEOSITE,netflix,国外媒体",
+    "GEOSITE,tiktok,国外媒体",
+    "GEOSITE,bahamut,国外媒体",
+    "GEOSITE,spotify,国外媒体",
+    "GEOSITE,category-games@cn,全局直连",
+    "GEOSITE,category-games@!cn,游戏专用",
+    "GEOSITE,steam@cn,全局直连",
+    "GEOSITE,steam,游戏专用",
+    "GEOSITE,steamunlocked,游戏专用",
+    "GEOSITE,geolocation-!cn,节点选择",
+    "GEOSITE,gfw,节点选择",
+    "GEOIP,private,全局直连,no-resolve",
+    "GEOIP,JP,节点选择",
+    "RULE-SET,gfw,节点选择",
+    "RULE-SET,download,下载软件",
+    "GEOSITE,category-ads-all,广告过滤",
+    "GEOSITE,tracker,广告过滤",
+    "RULE-SET,reject,全局拦截",
+    "NOT,((GEOIP,CN)),节点选择",
+    "MATCH,全局直连",
+];
+
+// 程序入口
+/**
+ * 全局脚本的主入口
+ * 可以使用第二个参数profileName针对特定的订阅进行个性化设置
+ * 里面某些参数设置看个人需求可以增减
+ */
+function main(config) {
+    const proxyCount = config?.proxies?.length ?? 0;
+    let proxyGroupsRegion = [];
+    const proxyProviderCount =
+        typeof config?.["proxy-providers"] === "object" ?
+        Object.keys(config["proxy-providers"]).length :
+        0;
+    if (proxyCount === 0 && proxyProviderCount === 0) {
+        throw new Error("配置文件中未找到任何代理");
+    }
+
+    config["allow-lan"] = true;
+
+    config["bind-address"] = "*";
+
+    /**
+     * 这个也会被cvr覆盖
+     * @type {number}
+     */
+    config["mixed-port"] = 7890;
+
+    config["mode"] = "rule";
+
+    // 覆盖原配置中DNS配置
+    config["dns"] = dnsConfig;
+
+    config["profile"] = {
+        "store-selected": true,
+        "store-fake-ip": true,
+    };
+
+    config["unified-delay"] = true;
+
+    config["tcp-concurrent"] = true;
+
+    /**
+     * cvr可以在设置里进行配置
+     */
+    config["log-level"] = "error";
+
+    /**
+     * 这个值设置大点能省电，笔记本和手机需要关注一下
+     */
+    config["keep-alive-interval"] = 1800;
+
+    config["find-process-mode"] = "strict";
+
+    /**
+     * 这个值在cvr中会被web ui的设置覆盖
+     */
+    config["external-controller"] = "127.0.0.1:9090";
+
+    config["external-controller-tls"] = "127.0.0.1:9443";
+
+    config["geodata-mode"] = true;
+
+    /**
+     * 适合小内存环境，如果在旁路由里运行可以改成standard
+     */
+    config["geodata-loader"] = "memconservative";
+
+    config["geo-auto-update"] = true;
+
+    config["geo-update-interval"] = 24;
+
+    /**
+     * 用MetaCubeX的geo文件，个人感觉更新比较频繁，数据比较全面
+     */
+    config["geox-url"] = {
+        geoip: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat",
+        geosite: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat",
+        mmdb: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb",
+    };
+
+    /**
+     * 不开域名嗅探的话，日志里只会记录请求的ip，对查找问题不方便
+     * override-destination默认值是true，但是个人建议全局设为false，否则某些应用会出现莫名其妙的问题
+     * Mijia Cloud跳过是网上抄的
+     */
+    config["sniffer"] = {
+        enable: true,
+        "force-dns-mapping": true,
+        "parse-pure-ip": true,
+        "override-destination": false,
+        sniff: {
+            TLS: {
+                ports: [443, 8443],
+            },
+            HTTP: {
+                ports: [80, "8080-8880"],
+            },
+            QUIC: {
+                ports: [443, 8443],
+            },
+        },
+        "force-domain": [],
+        "skip-domain": [
+            "Mijia Cloud",
+            "+.oray.com"
+        ],
+    };
+
+    /**
+     * 同步节点服务器的时间能降低被识别为代理上网的概率？（然并卵）
+     * 可以不设置
+     * write-to-system如果设为true的话，有可能出现电脑时间不对的问题
+     */
+    config["ntp"] = {
+        enable: true,
+        "write-to-system": false,
+        server: "cn.ntp.org.cn",
+    };
+
+    /**
+     * 如果配置文件里没有代理节点就直接返回
+     */
+    if (!config?.proxies) {
+        return config;
+    }
+
+    // 覆盖原配置中的规则
+    config["rule-providers"] = ruleProviders;
+    config["rules"] = rules;
+
+    // 代理组通用配置
+    const groupBaseOption = {
+        interval: 300,
+        timeout: 3000,
+        url: "https://www.google.com/generate_204",
+        lazy: true,
+        "max-failed-times": 3,
+        hidden: false,
+    };
+
+    /**
+     * 下面就是整个脚本的核心部分了，前方低能！！！
+     */
+    options.regions.forEach((region) => {
+        /**
+         * 提取倍率符合要求的代理节点
+         * 判断倍率有问题的话，大概率是这个正则的问题，可以自行修改
+         * 自己改正则的话记得必须把倍率的number值提取出来
+         */
+        let proxies = config.proxies
+            .filter((a) => {
+                const multiplier =
+                    /(?<=[xX✕✖⨉倍率])([1-9]+(\.\d+)*|0{1}\.\d+)(?=[xX✕✖⨉倍率])*/i.exec(
+                        a.name,
+                    )?.[1];
+                return (
+                    a.name.match(region.regex) &&
+                    parseFloat(multiplier || "0") <= region.ratioLimit
+                );
+            })
+            .map((b) => {
+                return b.name;
+            });
+
+        /**
+         * 必须再判断一下有没有符合要求的代理节点
+         * 没有的话，这个策略组就不应该存在
+         * 我喜欢自动选择延迟最低的节点，喜欢轮询的可以自己修改
+         */
+        if (proxies.length > 0) {
+            proxyGroupsRegion.push({
+                ...groupBaseOption,
+                name: region.name,
+                type: "url-test",
+                tolerance: 100,
+                icon: region.icon,
+                proxies: proxies,
+            });
+        }
+    });
+
+    /**
+     * 当地区策略组存在是，再建立一个地区选择的策略组
+     * 类型为手动选择，方便切换地区
+     */
+    if (proxyGroupsRegion.length > 0) {
+        proxyGroupsRegion = [{
+                ...groupBaseOption,
+                name: "地区选择",
+                type: "select",
+                proxies: proxyGroupsRegion.map((item) => {
+                    return item.name;
+                }),
+                icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/flags/un.svg",
+            },
+            ...proxyGroupsRegion,
+        ];
+    }
+
+    /**
+     * 覆盖原配置中的代理组
+     * 为什么这么多include-all？我喜欢！
+     * 国外媒体、谷歌服务什么的可以自己根据喜好调整，记得同时调整分流规则
+     * 把全局地区选择和地区策略组都插到国外媒体等策略组里，能进行更精细的分流
+     * 别嫌麻烦，策略组可以互相套用是clash meta（mihomo）强大的卖点之一
+     * 全局拦截依然保留了节点选择，万一某天手贱想看看拦截了什么东西呢？
+     * 全局直连也保留了节点选择，同样是为了预防自己手贱
+     */
+    config["proxy-groups"] = [{
+            ...groupBaseOption,
+            name: "节点选择",
+            type: "select",
+            proxies: [
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/adjust.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "延迟选优",
+            type: "url-test",
+            tolerance: 100,
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/speed.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "故障转移",
+            type: "fallback",
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/ambulance.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "负载均衡(散列)",
+            type: "load-balance",
+            strategy: "consistent-hashing",
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/merry_go.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "负载均衡(轮询)",
+            type: "load-balance",
+            strategy: "round-robin",
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/balance.svg",
+        },
+        /**
+         * 地区选择在这里插入
+         */
+        ...proxyGroupsRegion,
+        {
+            ...groupBaseOption,
+            name: "国外媒体",
+            type: "select",
+            proxies: [
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                "全局直连",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            url: "https://i.ytimg.com/generate_204",
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/youtube.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "电报消息",
+            type: "select",
+            proxies: [
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                "全局直连",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            url: "https://www.telegram.org/img/website_icon.svg",
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/telegram.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "游戏专用",
+            type: "select",
+            proxies: [
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                "全局直连",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/steam.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "下载软件",
+            type: "select",
+            proxies: [
+                "DIRECT",
+                "REJECT",
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                "全局直连",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/app_store.svg",
+        },
+        {
+            ...groupBaseOption,
+            "expected-status": "200",
+            name: "OpenAI",
+            type: "select",
+            proxies: [
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                "全局直连",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            url: "https://cdn.oaistatic.com/_next/static/media/favicon-32x32.630a2b99.png",
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/chatgpt.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "谷歌服务",
+            type: "select",
+            proxies: [
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                "全局直连",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/google.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "微软服务",
+            type: "select",
+            proxies: [
+                "全局直连",
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            url: "https://logincdn.msauth.net/shared/5/images/microsoft_logo_ee5c8d9fb6248c938fd0.svg",
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/microsoft.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "苹果服务",
+            type: "select",
+            proxies: [
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                "全局直连",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            url: "https://www.icloud.com/system/icloud.com/2420Hotfix12/favicon-16x16.png",
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/apple.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "广告过滤",
+            type: "select",
+            proxies: ["REJECT", "DIRECT", "节点选择"],
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/bug.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "全局直连",
+            type: "select",
+            proxies: [
+                "DIRECT",
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                ...proxyGroupsRegion.map((value) => {
+                    return value.name;
+                }),
+            ],
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/link.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "全局拦截",
+            type: "select",
+            proxies: ["REJECT", "DIRECT", "节点选择"],
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/block.svg",
+        },
+        {
+            ...groupBaseOption,
+            name: "漏网之鱼",
+            type: "select",
+            proxies: [
+                "节点选择",
+                "延迟选优",
+                "故障转移",
+                "负载均衡(散列)",
+                "负载均衡(轮询)",
+                "全局直连",
+            ],
+            "include-all": true,
+            icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/fish.svg",
+        },
+    ];
+
+    // 返回修改后的配置
+    return config;
+}
