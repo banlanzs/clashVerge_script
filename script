@@ -391,43 +391,93 @@ function main(config) {
     /**
      * 下面就是整个脚本的核心部分了，前方低能！！！
      */
-    options.regions.forEach((region) => {
-        /**
-         * 提取倍率符合要求的代理节点
-         * 判断倍率有问题的话，大概率是这个正则的问题，可以自行修改
-         * 自己改正则的话记得必须把倍率的number值提取出来
-         */
-        let proxies = config.proxies
-            .filter((a) => {
-                const multiplier =
-                    /(?<=[xX✕✖⨉倍率])([1-9]+(\.\d+)*|0{1}\.\d+)(?=[xX✕✖⨉倍率])*/i.exec(
-                        a.name,
-                    )?.[1];
-                return (
-                    a.name.match(region.regex) &&
-                    parseFloat(multiplier || "0") <= region.ratioLimit
-                );
-            })
-            .map((b) => {
-                return b.name;
-            });
 
-        /**
-         * 必须再判断一下有没有符合要求的代理节点
-         * 没有的话，这个策略组就不应该存在
-         * 我喜欢自动选择延迟最低的节点，喜欢轮询的可以自己修改
-         */
-        if (proxies.length > 0) {
-            proxyGroupsRegion.push({
-                ...groupBaseOption,
-                name: region.name,
-                type: "url-test",
-                tolerance: 100,
-                icon: region.icon,
-                proxies: proxies,
-            });
-        }
-    });
+    ////我加的
+    //const highMultiplierProxies = []; // 用于存储高倍率节点
+
+options.regions.forEach((region) => {
+    /**
+     * 提取倍率符合要求的代理节点
+     * 判断倍率有问题的话，大概率是这个正则的问题，可以自行修改
+     * 自己改正则的话记得必须把倍率的number值提取出来
+     */
+    let proxies = config.proxies
+        .filter((a) => {
+            const multiplier =
+                /(?<=[xX✕✖⨉倍率])([1-9]+(\.\d+)*|0{1}\.\d+)(?=[xX✕✖⨉倍率])*/i.exec(
+                    a.name,
+                )?.[1];
+            const parsedMultiplier = parseFloat(multiplier || "0");
+
+            // 如果倍率高于 region.ratioLimit，则加入到高倍率节点数组
+            if (parsedMultiplier > region.ratioLimit) {
+                highMultiplierProxies.push(a.name);
+            }
+
+            return (
+                a.name.match(region.regex) &&
+                parsedMultiplier <= region.ratioLimit
+            );
+        })
+        .map((b) => {
+            return b.name;
+        });
+
+    /**
+     * 必须再判断一下有没有符合要求的代理节点
+     * 没有的话，这个策略组就不应该存在
+     * 我喜欢自动选择延迟最低的节点，喜欢轮询的可以自己修改
+     */
+    if (proxies.length > 0) {
+        proxyGroupsRegion.push({
+            ...groupBaseOption,
+            name: region.name,
+            type: "url-test",
+            tolerance: 100,
+            icon: region.icon,
+            proxies: proxies,
+        });
+    }
+});
+    /////////////
+
+    // options.regions.forEach((region) => {
+    //     /**
+    //      * 提取倍率符合要求的代理节点
+    //      * 判断倍率有问题的话，大概率是这个正则的问题，可以自行修改
+    //      * 自己改正则的话记得必须把倍率的number值提取出来
+    //      */
+    //     let proxies = config.proxies
+    //         .filter((a) => {
+    //             const multiplier =
+    //                 /(?<=[xX✕✖⨉倍率])([1-9]+(\.\d+)*|0{1}\.\d+)(?=[xX✕✖⨉倍率])*/i.exec(
+    //                     a.name,
+    //                 )?.[1];
+    //             return (
+    //                 a.name.match(region.regex) &&
+    //                 parseFloat(multiplier || "0") <= region.ratioLimit
+    //             );
+    //         })
+    //         .map((b) => {
+    //             return b.name;
+    //         });
+
+    //     /**
+    //      * 必须再判断一下有没有符合要求的代理节点
+    //      * 没有的话，这个策略组就不应该存在
+    //      * 我喜欢自动选择延迟最低的节点，喜欢轮询的可以自己修改
+    //      */
+    //     if (proxies.length > 0) {
+    //         proxyGroupsRegion.push({
+    //             ...groupBaseOption,
+    //             name: region.name,
+    //             type: "url-test",
+    //             tolerance: 100,
+    //             icon: region.icon,
+    //             proxies: proxies,
+    //         });
+    //     }
+    // });
 
     /**
      * 当地区策略组存在是，再建立一个地区选择的策略组
@@ -479,6 +529,10 @@ function main(config) {
             tolerance: 100,
             "include-all": true,
             icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/speed.svg",
+            ////////我加的
+            "url": "http://www.gstatic.com/generate_204", // 测试延迟用的 URL
+            "interval": 300, // 每300秒重新测试一次
+            /////////
         },
         {
             ...groupBaseOption,
@@ -706,6 +760,17 @@ function main(config) {
             "include-all": true,
             icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/fish.svg",
         },
+//         /////我加的
+//     {
+//     ...groupBaseOption,
+//     name: "高倍率节点",
+//     type: "select",
+//     proxies: highMultiplierProxies, // 将高倍率节点添加到这个策略组
+//     "include-all": false, // 不包括其他节点
+//     icon: "https://fastly.jsdelivr.net/gh/clash-verge-rev/clash-verge-rev.github.io@main/docs/assets/icons/high_cost.svg", // 自定义图标
+// }
+    ///////////////
+
     ];
 
     // 返回修改后的配置
